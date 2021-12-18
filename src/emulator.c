@@ -20,55 +20,71 @@ typedef struct State8080 {
     uint8_t l;
     uint16_t sp;
     uint16_t pc;
-    uint8_t *memory;
+    uint8_t* memory;
     struct ConditionCodes codes;
     uint8_t int_enable;
 } State8080;
 
+void calculate_codes_all(State8080* state, uint8_t result) {
+    state->codes.z = (result & 0xff) == 0;
+    state->codes.s = (result & 0x80) != 0;
+    state->codes.p = __builtin_parity(result);
+    state->codes.cy = result > 0xff;
+    state->codes.ac = result > 0x09;
+}
+
+void calculate_codes_all_except_cy(State8080* state, uint8_t result) {
+    state->codes.z = (result & 0xff) == 0;
+    state->codes.s = (result & 0x80) != 0;
+    state->codes.p = __builtin_parity(result);
+    state->codes.ac = result > 0x09;
+}
+
+/*------------------------ Errors ------------------------*/
 void unimplemented_op_error(State8080* state) {
-    printf("Error: Unimplemented operation at 0x%02x\n", state->pc);
+    printf("Error: Unimplemented operation at 0x%02x (opcode: 0x%02x)\n", state->pc, state->memory[state->pc]);
     exit(1);
-}
-
-uint8_t parity(uint16_t value) {
-    return __builtin_parity(value);
-}
-
-uint8_t is_zero(uint16_t value) {
-    return (value & 0xff) == 0;
-}
-
-uint8_t sign(uint16_t value) {
-    return (value & 0x80) != 0;
-}
-
-uint8_t carry(uint16_t value) {
-    return value > 0xff;
 }
 
 /*--------------- Arithmetic Instructions ---------------*/
 void add(State8080* state, uint8_t value) {
-    uint16_t result = (uint16_t)(state->a) + (uint16_t)value;
-    state->codes.z = is_zero(result);
-    state->codes.s = sign(result);
-    state->codes.p = parity(result);
-    state->codes.cy = carry(result);
+    uint16_t result = (uint16_t)state->a + (uint16_t)value;
+    calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void adc(State8080* state, uint8_t value) {
-    uint16_t result = (uint16_t)(state->a) + (uint16_t)value + (uint16_t)state->codes.cy;
-    state->codes.z = is_zero(result);
-    state->codes.s = sign(result);
-    state->codes.p = parity(result);
-    state->codes.cy = carry(result);
+    uint16_t result = (uint16_t)state->a + (uint16_t)value + (uint16_t)state->codes.cy;
+    calculate_codes_all(state, result);
     state->a = result & 0xff;
+}
+
+void sub(State8080* state, uint8_t value) {
+    uint16_t result = (uint16_t)state->a - (uint16_t)value;
+    calculate_codes_all(state, result);
+    state->a = result & 0xff;
+}
+
+void sbb(State8080* state, uint8_t value) {
+    uint16_t result = (uint16_t)state->a - (uint16_t)value - (uint16_t)state->codes.cy;
+    calculate_codes_all(state, result);
+    state->a = result & 0xff;
+}
+
+void inr(State8080* state, uint8_t* reg) {
+    *reg = *reg + 1;
+    calculate_codes_all_except_cy(state, *reg);
+}
+
+void dcr(State8080* state, uint8_t* reg) {
+    *reg = *reg - 1;
+    calculate_codes_all_except_cy(state, *reg);
 }
 
 /*----------------- Branch Instructions -----------------*/
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
-    state->pc = ((uint16_t)(opcode[2]) << 8) | (uint16_t)opcode[1];
+    state->pc = ((uint16_t)opcode[2] << 8) | (uint16_t)opcode[1];
 }
 
 void call(State8080* state, unsigned char* opcode) {
@@ -90,14 +106,14 @@ void ret(State8080* state) {
     // Assign the program counter to the address at the top of the stack, then move the stack
     // pointer back down to "pop" it.
     state->pc = (uint16_t)(state->memory[state->sp]) | 
-        (uint16_t)((state->memory[state->sp + 1]) << 8);
+        (uint16_t)(state->memory[state->sp + 1] << 8);
     state->sp += 2;
 }
 
 /*-------------------------------------------------------*/
 
 void emulate_op(State8080* state) {
-    unsigned char* opcode = &(state->memory[state->pc]);
+    uint8_t* opcode = &state->memory[state->pc];
     uint16_t addr_offset;
 
     switch(*opcode) {
@@ -110,16 +126,16 @@ void emulate_op(State8080* state) {
         case 0x02:              // STAX B
             unimplemented_op_error(state); break;
         case 0x03: unimplemented_op_error(state); break;
-        case 0x04: unimplemented_op_error(state); break;
-        case 0x05: unimplemented_op_error(state); break;
+        case 0x04: inr(state, &state->b); break;    // INR B
+        case 0x05: dcr(state, &state->b); break;    // DCR B
         case 0x06: unimplemented_op_error(state); break;
         case 0x07: unimplemented_op_error(state); break;
         case 0x08: unimplemented_op_error(state); break;
         case 0x09: unimplemented_op_error(state); break;
         case 0x0a: unimplemented_op_error(state); break;
         case 0x0b: unimplemented_op_error(state); break;
-        case 0x0c: unimplemented_op_error(state); break;
-        case 0x0d: unimplemented_op_error(state); break;
+        case 0x0c: inr(state, &state->c); break;    // INR C
+        case 0x0d: dcr(state, &state->c); break;    // DCR C
         case 0x0e: unimplemented_op_error(state); break;
         case 0x0f: unimplemented_op_error(state); break;
 
@@ -127,16 +143,16 @@ void emulate_op(State8080* state) {
         case 0x11: unimplemented_op_error(state); break;
         case 0x12: unimplemented_op_error(state); break;
         case 0x13: unimplemented_op_error(state); break;
-        case 0x14: unimplemented_op_error(state); break;
-        case 0x15: unimplemented_op_error(state); break;
+        case 0x14: inr(state, &state->d); break;    // INR D
+        case 0x15: dcr(state, &state->d); break;    // DCR D
         case 0x16: unimplemented_op_error(state); break;
         case 0x17: unimplemented_op_error(state); break;
         case 0x18: unimplemented_op_error(state); break;
         case 0x19: unimplemented_op_error(state); break;
         case 0x1a: unimplemented_op_error(state); break;
         case 0x1b: unimplemented_op_error(state); break;
-        case 0x1c: unimplemented_op_error(state); break;
-        case 0x1d: unimplemented_op_error(state); break;
+        case 0x1c: inr(state, &state->e); break;    // INR E
+        case 0x1d: dcr(state, &state->e); break;    // DCR E
         case 0x1e: unimplemented_op_error(state); break;
         case 0x1f: unimplemented_op_error(state); break;
 
@@ -144,16 +160,16 @@ void emulate_op(State8080* state) {
         case 0x21: unimplemented_op_error(state); break;
         case 0x22: unimplemented_op_error(state); break;
         case 0x23: unimplemented_op_error(state); break;
-        case 0x24: unimplemented_op_error(state); break;
-        case 0x25: unimplemented_op_error(state); break;
+        case 0x24: inr(state, &state->h); break;    // INR H
+        case 0x25: dcr(state, &state->h); break;    // DCR H
         case 0x26: unimplemented_op_error(state); break;
         case 0x27: unimplemented_op_error(state); break;
         case 0x28: unimplemented_op_error(state); break;
         case 0x29: unimplemented_op_error(state); break;
         case 0x2a: unimplemented_op_error(state); break;
         case 0x2b: unimplemented_op_error(state); break;
-        case 0x2c: unimplemented_op_error(state); break;
-        case 0x2d: unimplemented_op_error(state); break;
+        case 0x2c: inr(state, &state->l); break;    // INR L
+        case 0x2d: dcr(state, &state->l); break;    // DCR L
         case 0x2e: unimplemented_op_error(state); break;
         case 0x2f: unimplemented_op_error(state); break;
 
@@ -161,16 +177,22 @@ void emulate_op(State8080* state) {
         case 0x31: unimplemented_op_error(state); break;
         case 0x32: unimplemented_op_error(state); break;
         case 0x33: unimplemented_op_error(state); break;
-        case 0x34: unimplemented_op_error(state); break;
-        case 0x35: unimplemented_op_error(state); break;
+        case 0x34:                                  // INR M
+            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            inr(state, &state->memory[addr_offset]);
+            break;
+        case 0x35:                                  // DCR M
+            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            dcr(state, &state->memory[addr_offset]);
+            break;
         case 0x36: unimplemented_op_error(state); break;
         case 0x37: unimplemented_op_error(state); break;
         case 0x38: unimplemented_op_error(state); break;
         case 0x39: unimplemented_op_error(state); break;
         case 0x3a: unimplemented_op_error(state); break;
         case 0x3b: unimplemented_op_error(state); break;
-        case 0x3c: unimplemented_op_error(state); break;
-        case 0x3d: unimplemented_op_error(state); break;
+        case 0x3c: inr(state, &state->a); break;    // INR A
+        case 0x3d: dcr(state, &state->a); break;    // DCR A
         case 0x3e: unimplemented_op_error(state); break;
         case 0x3f: unimplemented_op_error(state); break;
 
@@ -265,22 +287,28 @@ void emulate_op(State8080* state) {
             break;
         case 0x8f: adc(state, state->a); break;     // ADC A
 
-        case 0x90: unimplemented_op_error(state); break;
-        case 0x91: unimplemented_op_error(state); break;
-        case 0x92: unimplemented_op_error(state); break;
-        case 0x93: unimplemented_op_error(state); break;
-        case 0x94: unimplemented_op_error(state); break;
-        case 0x95: unimplemented_op_error(state); break;
-        case 0x96: unimplemented_op_error(state); break;
-        case 0x97: unimplemented_op_error(state); break;
-        case 0x98: unimplemented_op_error(state); break;
-        case 0x99: unimplemented_op_error(state); break;
-        case 0x9a: unimplemented_op_error(state); break;
-        case 0x9b: unimplemented_op_error(state); break;
-        case 0x9c: unimplemented_op_error(state); break;
-        case 0x9d: unimplemented_op_error(state); break;
-        case 0x9e: unimplemented_op_error(state); break;
-        case 0x9f: unimplemented_op_error(state); break;
+        case 0x90: sub(state, state->b); break;     // SUB B
+        case 0x91: sub(state, state->c); break;     // SUB C
+        case 0x92: sub(state, state->d); break;     // SUB D
+        case 0x93: sub(state, state->e); break;     // SUB E
+        case 0x94: sub(state, state->h); break;     // SUB H
+        case 0x95: sub(state, state->l); break;     // SUB L
+        case 0x96:                                  // SUB M
+            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            sub(state, state->memory[addr_offset]);
+            break;
+        case 0x97: sub(state, state->a); break;     // SUB A
+        case 0x98: sbb(state, state->b); break;     // SBB B
+        case 0x99: sbb(state, state->c); break;     // SBB C
+        case 0x9a: sbb(state, state->d); break;     // SBB D
+        case 0x9b: sbb(state, state->e); break;     // SBB E
+        case 0x9c: sbb(state, state->h); break;     // SBB H
+        case 0x9d: sbb(state, state->l); break;     // SBB L
+        case 0x9e:                                  // SBB M
+            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            sbb(state, state->memory[addr_offset]);
+            break;
+        case 0x9f: sbb(state, state->a); break;     // SBB A
 
         case 0xa0: unimplemented_op_error(state); break;
         case 0xa1: unimplemented_op_error(state); break;
@@ -447,7 +475,7 @@ void emulate_op(State8080* state) {
 }
 
 void print_state(State8080* state) {
-    printf("State: {a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%02x, pc: 0x%02x\n", 
+    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%02x, pc: 0x%02x}\n", 
         state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp, state->pc);
 }
 
@@ -469,12 +497,21 @@ int main(int argc, char** argv) {
     fread(buffer, file_size, 1, file);
     fclose(file);
 
-    // Read through the buffer and emulate every operation.
+    // Initialize state with ROM as the memory buffer
     ConditionCodes codes = {0, 0, 0, 0, 0};
     State8080 state = {0, 0, 0, 0, 0, 0, 0, 0, 0, buffer, codes, 0};
+    
+    printf("Init -- ");
+    print_state(&state);
+
+    // Read through the buffer and emulate each operation.
+    unsigned int opcounter = 0;
     while(state.pc < file_size) {
-        print_state(&state);
         emulate_op(&state);
+        printf("%u 0x%02x -> State: ", opcounter, state.memory[state.pc]);
+        print_state(&state);
+
+        opcounter++;
     }
 
     return 0;
