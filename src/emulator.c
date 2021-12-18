@@ -25,24 +25,58 @@ typedef struct State8080 {
     uint8_t int_enable;
 } State8080;
 
-void calculate_codes_all(State8080* state, uint8_t result) {
+/*---------------- Helpers ----------------*/
+/**
+ * @brief Combine two 1-byte immediates into a 2-byte immediate. Useful for register pairs.
+ * 
+ * @param a 1-byte immediate
+ * @param b 1-byte immediate
+ * @return uint16_t Resulting 2-byte immediate
+ */
+uint16_t combine_immediates(uint8_t a, uint8_t b) {
+    return ((uint16_t)a << 8) | (uint16_t)b;
+}
+
+/*-------- Arithmetic Codes/Flags Calculations --------*/
+void calculate_codes_z(State8080* state, uint8_t result) {
     state->codes.z = (result & 0xff) == 0;
+}
+
+void calculate_codes_s(State8080* state, uint8_t result) {
     state->codes.s = (result & 0x80) != 0;
+}
+
+void calculate_codes_p(State8080* state, uint8_t result) {
     state->codes.p = __builtin_parity(result);
+}
+
+void calculate_codes_cy(State8080* state, uint8_t result) {
     state->codes.cy = result > 0xff;
+}
+
+void calculate_codes_ac(State8080* state, uint8_t result) {
     state->codes.ac = result > 0x09;
 }
 
+void calculate_codes_all(State8080* state, uint8_t result) {
+    calculate_codes_z(state, result);
+    calculate_codes_s(state, result);
+    calculate_codes_p(state, result);
+    calculate_codes_cy(state, result);
+    calculate_codes_ac(state, result);
+}
+
 void calculate_codes_all_except_cy(State8080* state, uint8_t result) {
-    state->codes.z = (result & 0xff) == 0;
-    state->codes.s = (result & 0x80) != 0;
-    state->codes.p = __builtin_parity(result);
-    state->codes.ac = result > 0x09;
+    calculate_codes_z(state, result);
+    calculate_codes_s(state, result);
+    calculate_codes_p(state, result);
+    calculate_codes_ac(state, result);
 }
 
 /*------------------------ Errors ------------------------*/
 void unimplemented_op_error(State8080* state) {
-    printf("Error: Unimplemented operation at 0x%02x (opcode: 0x%02x)\n", state->pc, state->memory[state->pc]);
+    printf("Error: Unimplemented operation at 0x%04x (opcode: 0x%02x)\n", 
+        state->pc, state->memory[state->pc]);
     exit(1);
 }
 
@@ -57,6 +91,13 @@ void adc(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a + (uint16_t)value + (uint16_t)state->codes.cy;
     calculate_codes_all(state, result);
     state->a = result & 0xff;
+}
+
+void dad(State8080* state, uint16_t value) {
+    uint16_t hl_addr = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+    uint32_t result = (uint32_t)state->memory[hl_addr] + (uint32_t)value;
+    state->memory[hl_addr] = result & 0xffff;
+    state->codes.cy = result > 0xffff;
 }
 
 void sub(State8080* state, uint8_t value) {
@@ -81,10 +122,43 @@ void dcr(State8080* state, uint8_t* reg) {
     calculate_codes_all_except_cy(state, *reg);
 }
 
+void inx(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
+    uint16_t reg_pair_addr = combine_immediates(reg_1_val, reg_2_val);
+    state->memory[reg_pair_addr]++;
+}
+
+/*--------------------- Logical Instructions ---------------------*/
+void rrc(State8080* state) {
+    state->codes.cy = state->a & 1;
+    state->a = ((state->a & 1) << 7) | (state->a >> 1);    
+}
+
+/*----------------- Data Transfer Instructions -----------------*/
+void mvi(State8080* state, uint8_t* reg, uint8_t value) {
+    *reg = value;
+    state->pc++;
+}
+
+void lxi(State8080* state, uint8_t* reg_1, uint8_t* reg_2, uint8_t* opcode) {
+    *reg_1 = opcode[2];
+    *reg_2 = opcode[1];
+    state->pc += 2;
+}
+
+void ldax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
+    uint16_t reg_pair_addr = combine_immediates(reg_1_val, reg_2_val);
+    state->a = state->memory[reg_pair_addr];
+}
+
+void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
+    uint16_t addr = combine_immediates(reg_1_val, reg_2_val);
+    state->memory[addr] = state->a;
+}
+
 /*----------------- Branch Instructions -----------------*/
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
-    state->pc = ((uint16_t)opcode[2] << 8) | (uint16_t)opcode[1];
+    state->pc = combine_immediates(opcode[2], opcode[1]);
 }
 
 void call(State8080* state, unsigned char* opcode) {
@@ -117,83 +191,106 @@ void emulate_op(State8080* state) {
     uint16_t addr_offset;
 
     switch(*opcode) {
-        case 0x00: break;       // NOP
-        case 0x01:              // LXI B,2-byte-immediate
-            state->b = opcode[2];
-            state->c = opcode[1];
-            state->pc += 2;
+        case 0x00: break;                                   // NOP
+        case 0x01:                                          // LXI B,2-byte-immediate
+            lxi(state, &state->b, &state->c, opcode); 
             break;
-        case 0x02:              // STAX B
-            unimplemented_op_error(state); break;
-        case 0x03: unimplemented_op_error(state); break;
-        case 0x04: inr(state, &state->b); break;    // INR B
-        case 0x05: dcr(state, &state->b); break;    // DCR B
-        case 0x06: unimplemented_op_error(state); break;
+        case 0x02: unimplemented_op_error(state); break;
+        case 0x03: inx(state, state->b, state->c); break;   // INX B
+        case 0x04: inr(state, &state->b); break;            // INR B
+        case 0x05: dcr(state, &state->b); break;            // DCR B
+        case 0x06: mvi(state, &state->b, opcode[1]); break; // MVI B,1-byte-imeddiate
         case 0x07: unimplemented_op_error(state); break;
         case 0x08: unimplemented_op_error(state); break;
-        case 0x09: unimplemented_op_error(state); break;
-        case 0x0a: unimplemented_op_error(state); break;
+        case 0x09:                                          // DAD B
+            addr_offset = combine_immediates(state->b, state->c);
+            dad(state, state->memory[addr_offset]);
+            break;
+        case 0x0a: ldax(state, state->b, state->c); break;  // LDAX B
         case 0x0b: unimplemented_op_error(state); break;
-        case 0x0c: inr(state, &state->c); break;    // INR C
-        case 0x0d: dcr(state, &state->c); break;    // DCR C
-        case 0x0e: unimplemented_op_error(state); break;
-        case 0x0f: unimplemented_op_error(state); break;
+        case 0x0c: inr(state, &state->c); break;            // INR C
+        case 0x0d: dcr(state, &state->c); break;            // DCR C
+        case 0x0e: mvi(state, &state->c, opcode[1]); break; // MVI C,1-byte-imeddiate
+        case 0x0f: rrc(state); break;                       // RRC
 
         case 0x10: unimplemented_op_error(state); break;
-        case 0x11: unimplemented_op_error(state); break;
+        case 0x11:                                          // LXI D,2-byte-immediate
+            lxi(state, &state->d, &state->e, opcode); 
+            break;
         case 0x12: unimplemented_op_error(state); break;
-        case 0x13: unimplemented_op_error(state); break;
-        case 0x14: inr(state, &state->d); break;    // INR D
-        case 0x15: dcr(state, &state->d); break;    // DCR D
-        case 0x16: unimplemented_op_error(state); break;
+        case 0x13: inx(state, state->d, state->e); break;   // INX D
+        case 0x14: inr(state, &state->d); break;            // INR D
+        case 0x15: dcr(state, &state->d); break;            // DCR D
+        case 0x16: mvi(state, &state->d, opcode[1]); break; // MVI D,1-byte-imeddiate
         case 0x17: unimplemented_op_error(state); break;
         case 0x18: unimplemented_op_error(state); break;
-        case 0x19: unimplemented_op_error(state); break;
-        case 0x1a: unimplemented_op_error(state); break;
+        case 0x19:                                          // DAD D
+            addr_offset = combine_immediates(state->d, state->e);
+            dad(state, state->memory[addr_offset]);
+            break;
+        case 0x1a: ldax(state, state->d, state->e); break;  // LDAX D
         case 0x1b: unimplemented_op_error(state); break;
-        case 0x1c: inr(state, &state->e); break;    // INR E
-        case 0x1d: dcr(state, &state->e); break;    // DCR E
-        case 0x1e: unimplemented_op_error(state); break;
+        case 0x1c: inr(state, &state->e); break;            // INR E
+        case 0x1d: dcr(state, &state->e); break;            // DCR E
+        case 0x1e: mvi(state, &state->e, opcode[1]); break; // MVI E,1-byte-imeddiate
         case 0x1f: unimplemented_op_error(state); break;
 
         case 0x20: unimplemented_op_error(state); break;
-        case 0x21: unimplemented_op_error(state); break;
+        case 0x21:                                          // LXI H,2-byte-immediate
+            lxi(state, &state->h, &state->l, opcode); 
+            break;
         case 0x22: unimplemented_op_error(state); break;
-        case 0x23: unimplemented_op_error(state); break;
-        case 0x24: inr(state, &state->h); break;    // INR H
-        case 0x25: dcr(state, &state->h); break;    // DCR H
-        case 0x26: unimplemented_op_error(state); break;
+        case 0x23: inx(state, state->h, state->l); break;   // INX H
+        case 0x24: inr(state, &state->h); break;            // INR H
+        case 0x25: dcr(state, &state->h); break;            // DCR H
+        case 0x26: mvi(state, &state->h, opcode[1]); break; // MVI H,1-byte-imeddiate
         case 0x27: unimplemented_op_error(state); break;
         case 0x28: unimplemented_op_error(state); break;
-        case 0x29: unimplemented_op_error(state); break;
+        case 0x29:                                          // DAD H
+            addr_offset = combine_immediates(state->h, state->l);
+            dad(state, state->memory[addr_offset]);
+            break;
         case 0x2a: unimplemented_op_error(state); break;
         case 0x2b: unimplemented_op_error(state); break;
-        case 0x2c: inr(state, &state->l); break;    // INR L
-        case 0x2d: dcr(state, &state->l); break;    // DCR L
-        case 0x2e: unimplemented_op_error(state); break;
+        case 0x2c: inr(state, &state->l); break;            // INR L
+        case 0x2d: dcr(state, &state->l); break;            // DCR L
+        case 0x2e: mvi(state, &state->l, opcode[1]); break; // MVI L,1-byte-imeddiate
         case 0x2f: unimplemented_op_error(state); break;
 
         case 0x30: unimplemented_op_error(state); break;
-        case 0x31: unimplemented_op_error(state); break;
-        case 0x32: unimplemented_op_error(state); break;
-        case 0x33: unimplemented_op_error(state); break;
-        case 0x34:                                  // INR M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+        case 0x31:                                          // LXI SP,2-byte-immediate
+            lxi(state, (uint8_t*)&state->sp, (uint8_t*)(&state->sp + 1), opcode); 
+            break;
+        case 0x32:                                          // STA 2-byte-immediate
+            stax(state, opcode[2], opcode[1]);
+            state->pc += 2;
+            break;
+        case 0x33: state->memory[state->pc]++; break;       //INX SP
+        case 0x34:                                          // INR M
+            addr_offset = combine_immediates(state->h, state->l);
             inr(state, &state->memory[addr_offset]);
             break;
-        case 0x35:                                  // DCR M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+        case 0x35:                                          // DCR M
+            addr_offset = combine_immediates(state->h, state->l);
             dcr(state, &state->memory[addr_offset]);
             break;
-        case 0x36: unimplemented_op_error(state); break;
+        case 0x36:                                          // MVI M,1-byte-imeddiate
+            addr_offset = combine_immediates(state->h, state->l);
+            mvi(state, &state->memory[addr_offset], opcode[1]);
+            break;
         case 0x37: unimplemented_op_error(state); break;
         case 0x38: unimplemented_op_error(state); break;
-        case 0x39: unimplemented_op_error(state); break;
-        case 0x3a: unimplemented_op_error(state); break;
+        case 0x39:                                          // DAD SP
+            dad(state, state->memory[state->sp]);
+            break;
+        case 0x3a:                                          // LDAX D
+             ldax(state, opcode[2], opcode[1]);
+             state->pc += 2;
+             break;
         case 0x3b: unimplemented_op_error(state); break;
-        case 0x3c: inr(state, &state->a); break;    // INR A
-        case 0x3d: dcr(state, &state->a); break;    // DCR A
-        case 0x3e: unimplemented_op_error(state); break;
+        case 0x3c: inr(state, &state->a); break;            // INR A
+        case 0x3d: dcr(state, &state->a); break;            // DCR A
+        case 0x3e: mvi(state, &state->a, opcode[1]); break; // MVI A,1-byte-imeddiate
         case 0x3f: unimplemented_op_error(state); break;
 
         case 0x40: unimplemented_op_error(state); break;
@@ -388,7 +485,7 @@ void emulate_op(State8080* state) {
         case 0xd3: unimplemented_op_error(state); break;
         case 0xd4: unimplemented_op_error(state); break;
         case 0xd5: unimplemented_op_error(state); break;
-        case 0xd6: unimplemented_op_error(state); break;
+        case 0xd6: sub(state, opcode[1]); state->pc++; break;   // SUI 1-byte-immediate
         case 0xd7: unimplemented_op_error(state); break;
         case 0xd8: unimplemented_op_error(state); break;
         case 0xd9: unimplemented_op_error(state); break;
@@ -408,7 +505,7 @@ void emulate_op(State8080* state) {
 
         case 0xe0: unimplemented_op_error(state); break;
         case 0xe1: unimplemented_op_error(state); break;
-        case 0xe2:                                              // JPO address
+        case 0xe2:                                  // JPO address
             if (state->codes.p == 0) {
                 jmp(state, opcode);
             }
@@ -423,7 +520,7 @@ void emulate_op(State8080* state) {
         case 0xe7: unimplemented_op_error(state); break;
         case 0xe8: unimplemented_op_error(state); break;
         case 0xe9: unimplemented_op_error(state); break;
-        case 0xea:                                              // JPE address
+        case 0xea:                                  // JPE address
             if (state->codes.p != 0) {
                 jmp(state, opcode);
             }
@@ -439,7 +536,7 @@ void emulate_op(State8080* state) {
 
         case 0xf0: unimplemented_op_error(state); break;
         case 0xf1: unimplemented_op_error(state); break;
-        case 0xf2:                                              // JP address
+        case 0xf2:                                  // JP address
             if (state->codes.s == 0) {
                 jmp(state, opcode);
             }
@@ -454,7 +551,7 @@ void emulate_op(State8080* state) {
         case 0xf7: unimplemented_op_error(state); break;
         case 0xf8: unimplemented_op_error(state); break;
         case 0xf9: unimplemented_op_error(state); break;
-        case 0xfa:                                              // JM address
+        case 0xfa:                                  // JM address
             if (state->codes.s != 0) {
                 jmp(state, opcode);
             }
@@ -475,7 +572,7 @@ void emulate_op(State8080* state) {
 }
 
 void print_state(State8080* state) {
-    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%02x, pc: 0x%02x}\n", 
+    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%04x, pc: 0x%04x}\n", 
         state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp, state->pc);
 }
 
@@ -507,8 +604,9 @@ int main(int argc, char** argv) {
     // Read through the buffer and emulate each operation.
     unsigned int opcounter = 0;
     while(state.pc < file_size) {
+        uint8_t cur_op = state.memory[state.pc];
         emulate_op(&state);
-        printf("%u 0x%02x -> State: ", opcounter, state.memory[state.pc]);
+        printf("%u 0x%02x -> State: ", opcounter, cur_op);
         print_state(&state);
 
         opcounter++;
