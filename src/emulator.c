@@ -159,6 +159,7 @@ void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
     state->pc = combine_immediates(opcode[2], opcode[1]);
+    state->pc += 2;
 }
 
 void call(State8080* state, unsigned char* opcode) {
@@ -179,8 +180,7 @@ void call(State8080* state, unsigned char* opcode) {
 void ret(State8080* state) {
     // Assign the program counter to the address at the top of the stack, then move the stack
     // pointer back down to "pop" it.
-    state->pc = (uint16_t)(state->memory[state->sp]) | 
-        (uint16_t)(state->memory[state->sp + 1] << 8);
+    state->pc = combine_immediates(state->memory[state->sp], state->memory[state->sp + 1]);
     state->sp += 2;
 }
 
@@ -605,8 +605,9 @@ int main(int argc, char** argv) {
     unsigned int opcounter = 0;
     while(state.pc < file_size) {
         uint8_t cur_op = state.memory[state.pc];
+        printf("%04u -- 0x%02x -> ", opcounter, cur_op);
         emulate_op(&state);
-        printf("%u 0x%02x -> State: ", opcounter, cur_op);
+        printf("State: ");
         print_state(&state);
 
         opcounter++;
