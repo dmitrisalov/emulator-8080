@@ -113,18 +113,20 @@ void sbb(State8080* state, uint8_t value) {
 }
 
 void inr(State8080* state, uint8_t* reg) {
-    *reg = *reg + 1;
+    (*reg)++;
     calculate_codes_all_except_cy(state, *reg);
 }
 
 void dcr(State8080* state, uint8_t* reg) {
-    *reg = *reg - 1;
+    (*reg)--;
     calculate_codes_all_except_cy(state, *reg);
 }
 
-void inx(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
-    uint16_t reg_pair_addr = combine_immediates(reg_1_val, reg_2_val);
-    state->memory[reg_pair_addr]++;
+void inx(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
+    (*reg_2)++;
+    if (*reg_2 == 0) {
+        (*reg_1)++;
+    }
 }
 
 /*--------------------- Logical Instructions ---------------------*/
@@ -170,7 +172,7 @@ void call(State8080* state, unsigned char* opcode) {
 
     // Push the address of the next instruction onto the stack
     state->memory[state->sp - 1] = (ret_address >> 8) & 0xff;
-    state->memory[state->sp - 2] = ret_address * 0xff;
+    state->memory[state->sp - 2] = ret_address & 0xff;
     state->sp = state->sp - 2;
 
     // Jump to the address
@@ -180,6 +182,7 @@ void call(State8080* state, unsigned char* opcode) {
 void ret(State8080* state) {
     // Assign the program counter to the address at the top of the stack, then move the stack
     // pointer back down to "pop" it.
+    printf("SP: 0x%04x, SP+1: 0x%04x\n", state->sp, state->sp + 1);
     state->pc = combine_immediates(state->memory[state->sp], state->memory[state->sp + 1]);
     state->sp += 2;
 }
@@ -196,7 +199,7 @@ void emulate_op(State8080* state) {
             lxi(state, &state->b, &state->c, opcode); 
             break;
         case 0x02: unimplemented_op_error(state); break;
-        case 0x03: inx(state, state->b, state->c); break;   // INX B
+        case 0x03: inx(state, &state->b, &state->c); break; // INX B
         case 0x04: inr(state, &state->b); break;            // INR B
         case 0x05: dcr(state, &state->b); break;            // DCR B
         case 0x06: mvi(state, &state->b, opcode[1]); break; // MVI B,1-byte-imeddiate
@@ -218,7 +221,7 @@ void emulate_op(State8080* state) {
             lxi(state, &state->d, &state->e, opcode); 
             break;
         case 0x12: unimplemented_op_error(state); break;
-        case 0x13: inx(state, state->d, state->e); break;   // INX D
+        case 0x13: inx(state, &state->d, &state->e); break; // INX D
         case 0x14: inr(state, &state->d); break;            // INR D
         case 0x15: dcr(state, &state->d); break;            // DCR D
         case 0x16: mvi(state, &state->d, opcode[1]); break; // MVI D,1-byte-imeddiate
@@ -240,7 +243,7 @@ void emulate_op(State8080* state) {
             lxi(state, &state->h, &state->l, opcode); 
             break;
         case 0x22: unimplemented_op_error(state); break;
-        case 0x23: inx(state, state->h, state->l); break;   // INX H
+        case 0x23: inx(state, &state->h, &state->l); break;   // INX H
         case 0x24: inr(state, &state->h); break;            // INR H
         case 0x25: dcr(state, &state->h); break;            // DCR H
         case 0x26: mvi(state, &state->h, opcode[1]); break; // MVI H,1-byte-imeddiate
@@ -265,7 +268,7 @@ void emulate_op(State8080* state) {
             stax(state, opcode[2], opcode[1]);
             state->pc += 2;
             break;
-        case 0x33: state->memory[state->pc]++; break;       //INX SP
+        case 0x33: state->memory[state->pc]++; break;       // INX SP
         case 0x34:                                          // INR M
             addr_offset = combine_immediates(state->h, state->l);
             inr(state, &state->memory[addr_offset]);
