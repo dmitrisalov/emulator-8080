@@ -38,13 +38,34 @@ uint16_t combine_immediates(uint8_t a, uint8_t b) {
 }
 
 /**
+ * @brief Prints the codes/flags for an 8080 state
+ * 
+ * @param state 
+ */
+void print_codes(State8080* state) {
+    printf("Codes {z: %u, s: %u, p: %u, cy: %u, ac: %u}\n", 
+        state->codes.z,
+        state->codes.s,
+        state->codes.p,
+        state->codes.cy,
+        state->codes.ac);
+}
+
+/**
  * @brief Prints a state
  * 
  * @param state 
  */
 void print_state(State8080* state) {
-    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%04x, pc: 0x%04x}\n", 
-        state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp, state->pc);
+    printf("State {a: 0x%02x, bc: 0x%04x, de: 0x%04x, hl: 0x%04x, pc: 0x%04x, sp: 0x%04x}\n\t\t", 
+        state->a,
+        combine_immediates(state->b, state->c),
+        combine_immediates(state->d, state->e),
+        combine_immediates(state->h, state->l),
+        state->pc, 
+        state->sp);
+
+    print_codes(state);
 }
 
 /*-------- Arithmetic Codes/Flags Calculations --------*/
@@ -57,7 +78,16 @@ void calculate_codes_s(State8080* state, uint8_t result) {
 }
 
 void calculate_codes_p(State8080* state, uint8_t result) {
-    state->codes.p = __builtin_parity(result);
+    const uint8_t RESULT_BITS = 8;
+
+    int parity = 0;
+    int i;
+    for (i = 0; i < RESULT_BITS; i++) {
+        parity += result & 1;
+        result = result >> 1;
+    }
+
+    state->codes.p = parity % 2 == 0;
 }
 
 void calculate_codes_cy(State8080* state, uint8_t result) {
@@ -188,6 +218,7 @@ void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
     state->pc = combine_immediates(opcode[2], opcode[1]);
+    state->pc -= 1;
 }
 
 void call(State8080* state, unsigned char* opcode) {
@@ -216,6 +247,8 @@ void ret(State8080* state) {
 
 void emulate_op(State8080* state) {
     uint8_t* opcode = &state->memory[state->pc];
+    printf("0x%02x -> ", *opcode);
+
     uint16_t addr_offset;
     uint16_t value;
 
@@ -288,7 +321,8 @@ void emulate_op(State8080* state) {
 
         case 0x30: unimplemented_op_error(state); break;
         case 0x31:                                          // LXI SP,2-byte-immediate
-            lxi(state, (uint8_t*)&state->sp, (uint8_t*)(&state->sp + 1), opcode); 
+            state->sp = combine_immediates(opcode[2], opcode[1]);
+            state->pc += 2;
             break;
         case 0x32:                                          // STA 2-byte-immediate
             stax(state, opcode[2], opcode[1]);
@@ -515,7 +549,7 @@ void emulate_op(State8080* state) {
         case 0xc0: unimplemented_op_error(state); break;
         case 0xc1: unimplemented_op_error(state); break;
         case 0xc2:                                              // JNZ address
-            if (state->codes.z != 0) {
+            if (state->codes.z == 0) {
                 jmp(state, opcode);
             }
             else {
@@ -528,9 +562,9 @@ void emulate_op(State8080* state) {
         case 0xc6: add(state, opcode[1]); state->pc++; break;   // ADI 1-byte-immediate
         case 0xc7: unimplemented_op_error(state); break;
         case 0xc8: unimplemented_op_error(state); break;
-        case 0xc9: ret(state); break;
+        case 0xc9: ret(state); break;                           // RET
         case 0xca:                                              // JZ address
-            if (state->codes.z == 0) {
+            if (state->codes.z != 0) {
                 jmp(state, opcode);
             }
             else {
@@ -698,22 +732,21 @@ int main(int argc, char** argv) {
     State8080* state = init_8080();
     uint16_t file_size = read_file_into_memory(state, argv[1], 0);
     
-    //printf("Init -- ");
-    //print_state(state);
+    printf("Init -- ");
+    print_state(state);
 
     // Read through the buffer and emulate each operation.
     unsigned int opcounter = 0;
     while(state->pc < file_size) {
         uint8_t cur_op = state->memory[state->pc];
-        //printf("%04u -- 0x%02x -> ", opcounter, cur_op);
+        printf("%04u -- ", opcounter);
         emulate_op(state);
-        //printf("State: ");
-        //print_state(state);
+        print_state(state);
 
         opcounter++;
 
-        if (opcounter % 1000 == 0) {
-            printf("%u\n", opcounter);
+        if (opcounter > 50000) {
+            exit(0);
         }
     }
 
