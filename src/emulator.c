@@ -37,6 +37,16 @@ uint16_t combine_immediates(uint8_t a, uint8_t b) {
     return ((uint16_t)a << 8) | (uint16_t)b;
 }
 
+/**
+ * @brief Prints a state
+ * 
+ * @param state 
+ */
+void print_state(State8080* state) {
+    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%04x, pc: 0x%04x}\n", 
+        state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp, state->pc);
+}
+
 /*-------- Arithmetic Codes/Flags Calculations --------*/
 void calculate_codes_z(State8080* state, uint8_t result) {
     state->codes.z = (result & 0xff) == 0;
@@ -75,7 +85,7 @@ void calculate_codes_all_except_cy(State8080* state, uint8_t result) {
 
 /*------------------------ Errors ------------------------*/
 void unimplemented_op_error(State8080* state) {
-    printf("Error: Unimplemented operation at 0x%04x (opcode: 0x%02x)\n", 
+    printf("\nError: Unimplemented operation at 0x%04x (opcode: 0x%02x)\n", 
         state->pc, state->memory[state->pc]);
     exit(1);
 }
@@ -83,31 +93,37 @@ void unimplemented_op_error(State8080* state) {
 /*--------------- Arithmetic Instructions ---------------*/
 void add(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a + (uint16_t)value;
+
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void adc(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a + (uint16_t)value + (uint16_t)state->codes.cy;
+
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void dad(State8080* state, uint16_t value) {
-    uint16_t hl_addr = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
-    uint32_t result = (uint32_t)state->memory[hl_addr] + (uint32_t)value;
-    state->memory[hl_addr] = result & 0xffff;
+    uint32_t hl = combine_immediates(state->h, state->l);
+    uint32_t result = hl + value;
+
     state->codes.cy = result > 0xffff;
+    state->h = (result & 0xff00) >> 8;
+    state->l = result & 0xff;
 }
 
 void sub(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a - (uint16_t)value;
+
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void sbb(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a - (uint16_t)value - (uint16_t)state->codes.cy;
+
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
@@ -129,6 +145,13 @@ void inx(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
     }
 }
 
+void dcx(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
+    (*reg_2)--;
+    if (*reg_2 == 0xff) {
+        (*reg_1)--;
+    }
+}
+
 /*--------------------- Logical Instructions ---------------------*/
 void rrc(State8080* state) {
     state->codes.cy = state->a & 1;
@@ -139,6 +162,10 @@ void rrc(State8080* state) {
 void mvi(State8080* state, uint8_t* reg, uint8_t value) {
     *reg = value;
     state->pc++;
+}
+
+void mov(State8080* state, uint8_t* move_to_reg, uint8_t* move_from_reg) {
+    *move_to_reg = *move_from_reg;
 }
 
 void lxi(State8080* state, uint8_t* reg_1, uint8_t* reg_2, uint8_t* opcode) {
@@ -161,7 +188,6 @@ void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
     state->pc = combine_immediates(opcode[2], opcode[1]);
-    state->pc += 2;
 }
 
 void call(State8080* state, unsigned char* opcode) {
@@ -173,7 +199,7 @@ void call(State8080* state, unsigned char* opcode) {
     // Push the address of the next instruction onto the stack
     state->memory[state->sp - 1] = (ret_address >> 8) & 0xff;
     state->memory[state->sp - 2] = ret_address & 0xff;
-    state->sp = state->sp - 2;
+    state->sp -= 2;
 
     // Jump to the address
     jmp(state, opcode);
@@ -182,8 +208,7 @@ void call(State8080* state, unsigned char* opcode) {
 void ret(State8080* state) {
     // Assign the program counter to the address at the top of the stack, then move the stack
     // pointer back down to "pop" it.
-    printf("SP: 0x%04x, SP+1: 0x%04x\n", state->sp, state->sp + 1);
-    state->pc = combine_immediates(state->memory[state->sp], state->memory[state->sp + 1]);
+    state->pc = combine_immediates(state->memory[state->sp + 1], state->memory[state->sp]);
     state->sp += 2;
 }
 
@@ -192,6 +217,7 @@ void ret(State8080* state) {
 void emulate_op(State8080* state) {
     uint8_t* opcode = &state->memory[state->pc];
     uint16_t addr_offset;
+    uint16_t value;
 
     switch(*opcode) {
         case 0x00: break;                                   // NOP
@@ -206,11 +232,11 @@ void emulate_op(State8080* state) {
         case 0x07: unimplemented_op_error(state); break;
         case 0x08: unimplemented_op_error(state); break;
         case 0x09:                                          // DAD B
-            addr_offset = combine_immediates(state->b, state->c);
-            dad(state, state->memory[addr_offset]);
+            value = combine_immediates(state->b, state->c);
+            dad(state, value);
             break;
         case 0x0a: ldax(state, state->b, state->c); break;  // LDAX B
-        case 0x0b: unimplemented_op_error(state); break;
+        case 0x0b: dcx(state, &state->b, &state->c); break; // DCX B
         case 0x0c: inr(state, &state->c); break;            // INR C
         case 0x0d: dcr(state, &state->c); break;            // DCR C
         case 0x0e: mvi(state, &state->c, opcode[1]); break; // MVI C,1-byte-imeddiate
@@ -228,11 +254,11 @@ void emulate_op(State8080* state) {
         case 0x17: unimplemented_op_error(state); break;
         case 0x18: unimplemented_op_error(state); break;
         case 0x19:                                          // DAD D
-            addr_offset = combine_immediates(state->d, state->e);
-            dad(state, state->memory[addr_offset]);
+            value = combine_immediates(state->d, state->e);
+            dad(state, value);
             break;
         case 0x1a: ldax(state, state->d, state->e); break;  // LDAX D
-        case 0x1b: unimplemented_op_error(state); break;
+        case 0x1b: dcx(state, &state->d, &state->e); break; // DCX D
         case 0x1c: inr(state, &state->e); break;            // INR E
         case 0x1d: dcr(state, &state->e); break;            // DCR E
         case 0x1e: mvi(state, &state->e, opcode[1]); break; // MVI E,1-byte-imeddiate
@@ -250,11 +276,11 @@ void emulate_op(State8080* state) {
         case 0x27: unimplemented_op_error(state); break;
         case 0x28: unimplemented_op_error(state); break;
         case 0x29:                                          // DAD H
-            addr_offset = combine_immediates(state->h, state->l);
-            dad(state, state->memory[addr_offset]);
+            value = combine_immediates(state->h, state->l);
+            dad(state, value);
             break;
         case 0x2a: unimplemented_op_error(state); break;
-        case 0x2b: unimplemented_op_error(state); break;
+        case 0x2b: dcx(state, &state->h, &state->l); break; // DCX H
         case 0x2c: inr(state, &state->l); break;            // INR L
         case 0x2d: dcr(state, &state->l); break;            // DCR L
         case 0x2e: mvi(state, &state->l, opcode[1]); break; // MVI L,1-byte-imeddiate
@@ -268,7 +294,7 @@ void emulate_op(State8080* state) {
             stax(state, opcode[2], opcode[1]);
             state->pc += 2;
             break;
-        case 0x33: state->memory[state->pc]++; break;       // INX SP
+        case 0x33: state->sp++; break;       // INX SP
         case 0x34:                                          // INR M
             addr_offset = combine_immediates(state->h, state->l);
             inr(state, &state->memory[addr_offset]);
@@ -284,85 +310,127 @@ void emulate_op(State8080* state) {
         case 0x37: unimplemented_op_error(state); break;
         case 0x38: unimplemented_op_error(state); break;
         case 0x39:                                          // DAD SP
-            dad(state, state->memory[state->sp]);
+            dad(state, state->sp);
             break;
         case 0x3a:                                          // LDAX D
              ldax(state, opcode[2], opcode[1]);
              state->pc += 2;
              break;
-        case 0x3b: unimplemented_op_error(state); break;
+        case 0x3b: state->sp--; break;                      // DCX B
         case 0x3c: inr(state, &state->a); break;            // INR A
         case 0x3d: dcr(state, &state->a); break;            // DCR A
         case 0x3e: mvi(state, &state->a, opcode[1]); break; // MVI A,1-byte-imeddiate
         case 0x3f: unimplemented_op_error(state); break;
 
-        case 0x40: unimplemented_op_error(state); break;
-        case 0x41: unimplemented_op_error(state); break;
-        case 0x42: unimplemented_op_error(state); break;
-        case 0x43: unimplemented_op_error(state); break;
-        case 0x44: unimplemented_op_error(state); break;
-        case 0x45: unimplemented_op_error(state); break;
-        case 0x46: unimplemented_op_error(state); break;
-        case 0x47: unimplemented_op_error(state); break;
-        case 0x48: unimplemented_op_error(state); break;
-        case 0x49: unimplemented_op_error(state); break;
-        case 0x4a: unimplemented_op_error(state); break;
-        case 0x4b: unimplemented_op_error(state); break;
-        case 0x4c: unimplemented_op_error(state); break;
-        case 0x4d: unimplemented_op_error(state); break;
-        case 0x4e: unimplemented_op_error(state); break;
-        case 0x4f: unimplemented_op_error(state); break;
+        case 0x40: mov(state, &state->b, &state->b); break; // MOV B,B
+        case 0x41: mov(state, &state->b, &state->c); break; // MOV B,C
+        case 0x42: mov(state, &state->b, &state->d); break; // MOV B,D
+        case 0x43: mov(state, &state->b, &state->e); break; // MOV B,E
+        case 0x44: mov(state, &state->b, &state->h); break; // MOV B,H
+        case 0x45: mov(state, &state->b, &state->l); break; // MOV B,L
+        case 0x46:                                          // MOV B,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->b, &state->memory[addr_offset]);
+            break;
+        case 0x47: mov(state, &state->b, &state->a); break; // MOV B,A
+        case 0x48: mov(state, &state->c, &state->b); break; // MOV C,B
+        case 0x49: mov(state, &state->c, &state->c); break; // MOV C,C
+        case 0x4a: mov(state, &state->c, &state->d); break; // MOV C,D
+        case 0x4b: mov(state, &state->c, &state->e); break; // MOV C,E
+        case 0x4c: mov(state, &state->c, &state->h); break; // MOV C,H
+        case 0x4d: mov(state, &state->c, &state->l); break; // MOV C,L
+        case 0x4e:                                          // MOV C,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->c, &state->memory[addr_offset]);
+            break;
+        case 0x4f: mov(state, &state->c, &state->a); break; // MOV C,A
 
-        case 0x50: unimplemented_op_error(state); break;
-        case 0x51: unimplemented_op_error(state); break;
-        case 0x52: unimplemented_op_error(state); break;
-        case 0x53: unimplemented_op_error(state); break;
-        case 0x54: unimplemented_op_error(state); break;
-        case 0x55: unimplemented_op_error(state); break;
-        case 0x56: unimplemented_op_error(state); break;
-        case 0x57: unimplemented_op_error(state); break;
-        case 0x58: unimplemented_op_error(state); break;
-        case 0x59: unimplemented_op_error(state); break;
-        case 0x5a: unimplemented_op_error(state); break;
-        case 0x5b: unimplemented_op_error(state); break;
-        case 0x5c: unimplemented_op_error(state); break;
-        case 0x5d: unimplemented_op_error(state); break;
-        case 0x5e: unimplemented_op_error(state); break;
-        case 0x5f: unimplemented_op_error(state); break;
+        case 0x50: mov(state, &state->d, &state->b); break; // MOV D,B
+        case 0x51: mov(state, &state->d, &state->c); break; // MOV D,C
+        case 0x52: mov(state, &state->d, &state->d); break; // MOV D,D
+        case 0x53: mov(state, &state->d, &state->e); break; // MOV D,E
+        case 0x54: mov(state, &state->d, &state->h); break; // MOV D,H
+        case 0x55: mov(state, &state->d, &state->l); break; // MOV D,L
+        case 0x56:                                          // MOV D,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->d, &state->memory[addr_offset]);
+            break;
+        case 0x57: mov(state, &state->d, &state->a); break; // MOV D,A
+        case 0x58: mov(state, &state->e, &state->b); break; // MOV E,B
+        case 0x59: mov(state, &state->e, &state->c); break; // MOV E,C
+        case 0x5a: mov(state, &state->e, &state->d); break; // MOV E,D
+        case 0x5b: mov(state, &state->e, &state->e); break; // MOV E,E
+        case 0x5c: mov(state, &state->e, &state->h); break; // MOV E,H
+        case 0x5d: mov(state, &state->e, &state->l); break; // MOV E,L
+        case 0x5e:                                          // MOV E,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->e, &state->memory[addr_offset]);
+            break;
+        case 0x5f: mov(state, &state->e, &state->a); break; // MOV E,A
 
-        case 0x60: unimplemented_op_error(state); break;
-        case 0x61: unimplemented_op_error(state); break;
-        case 0x62: unimplemented_op_error(state); break;
-        case 0x63: unimplemented_op_error(state); break;
-        case 0x64: unimplemented_op_error(state); break;
-        case 0x65: unimplemented_op_error(state); break;
-        case 0x66: unimplemented_op_error(state); break;
-        case 0x67: unimplemented_op_error(state); break;
-        case 0x68: unimplemented_op_error(state); break;
-        case 0x69: unimplemented_op_error(state); break;
-        case 0x6a: unimplemented_op_error(state); break;
-        case 0x6b: unimplemented_op_error(state); break;
-        case 0x6c: unimplemented_op_error(state); break;
-        case 0x6d: unimplemented_op_error(state); break;
-        case 0x6e: unimplemented_op_error(state); break;
-        case 0x6f: unimplemented_op_error(state); break;
+        case 0x60: mov(state, &state->h, &state->b); break; // MOV H,B
+        case 0x61: mov(state, &state->h, &state->c); break; // MOV H,C
+        case 0x62: mov(state, &state->h, &state->d); break; // MOV H,D
+        case 0x63: mov(state, &state->h, &state->e); break; // MOV H,E
+        case 0x64: mov(state, &state->h, &state->h); break; // MOV H,H
+        case 0x65: mov(state, &state->h, &state->l); break; // MOV H,L
+        case 0x66:                                          // MOV H,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->h, &state->memory[addr_offset]);
+            break;
+        case 0x67: mov(state, &state->h, &state->a); break; // MOV H,A
+        case 0x68: mov(state, &state->l, &state->b); break; // MOV L,B
+        case 0x69: mov(state, &state->l, &state->c); break; // MOV L,C
+        case 0x6a: mov(state, &state->l, &state->d); break; // MOV L,D
+        case 0x6b: mov(state, &state->l, &state->e); break; // MOV L,E
+        case 0x6c: mov(state, &state->l, &state->h); break; // MOV L,H
+        case 0x6d: mov(state, &state->l, &state->l); break; // MOV L,L
+        case 0x6e:                                          // MOV L,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->l, &state->memory[addr_offset]);
+            break;
+        case 0x6f: mov(state, &state->l, &state->a); break; // MOV L,A
 
-        case 0x70: unimplemented_op_error(state); break;
-        case 0x71: unimplemented_op_error(state); break;
-        case 0x72: unimplemented_op_error(state); break;
-        case 0x73: unimplemented_op_error(state); break;
-        case 0x74: unimplemented_op_error(state); break;
-        case 0x75: unimplemented_op_error(state); break;
+        case 0x70:                                          // MOV M,B
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->b);
+            break;
+        case 0x71:                                          // MOV M,C
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->c);
+            break;
+        case 0x72:                                          // MOV M,D
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->d);
+            break;
+        case 0x73:                                          // MOV M,E
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->e);
+            break;
+        case 0x74:                                          // MOV M,H
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->h);
+            break;
+        case 0x75:                                          // MOV M,L
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->l);
+            break;
         case 0x76: unimplemented_op_error(state); break;
-        case 0x77: unimplemented_op_error(state); break;
-        case 0x78: unimplemented_op_error(state); break;
-        case 0x79: unimplemented_op_error(state); break;
-        case 0x7a: unimplemented_op_error(state); break;
-        case 0x7b: unimplemented_op_error(state); break;
-        case 0x7c: unimplemented_op_error(state); break;
-        case 0x7d: unimplemented_op_error(state); break;
-        case 0x7e: unimplemented_op_error(state); break;
-        case 0x7f: unimplemented_op_error(state); break;
+        case 0x77:                                          // MOV M,A
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->memory[addr_offset], &state->a);
+            break;
+        case 0x78: mov(state, &state->a, &state->b); break; // MOV A,B
+        case 0x79: mov(state, &state->a, &state->c); break; // MOV A,C
+        case 0x7a: mov(state, &state->a, &state->d); break; // MOV A,D
+        case 0x7b: mov(state, &state->a, &state->e); break; // MOV A,E
+        case 0x7c: mov(state, &state->a, &state->h); break; // MOV A,H
+        case 0x7d: mov(state, &state->a, &state->l); break; // MOV A,L
+        case 0x7e:                                          // MOV A,M
+            addr_offset = combine_immediates(state->h, state->l);
+            mov(state, &state->a, &state->memory[addr_offset]);
+            break;
+        case 0x7f: mov(state, &state->a, &state->a); break; // MOV A,A
 
         case 0x80: add(state, state->b); break;     // ADD B
         case 0x81: add(state, state->c); break;     // ADD C
@@ -371,7 +439,7 @@ void emulate_op(State8080* state) {
         case 0x84: add(state, state->h); break;     // ADD H
         case 0x85: add(state, state->l); break;     // ADD L
         case 0x86:                                  // ADD M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            addr_offset = combine_immediates(state->h, state->l);
             add(state, state->memory[addr_offset]);
             break;
         case 0x87: add(state, state->a); break;     // ADD A
@@ -382,7 +450,7 @@ void emulate_op(State8080* state) {
         case 0x8c: adc(state, state->h); break;     // ADC H
         case 0x8d: adc(state, state->l); break;     // ADC L
         case 0x8e:                                  // ADC M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            addr_offset = combine_immediates(state->h, state->l);
             adc(state, state->memory[addr_offset]);
             break;
         case 0x8f: adc(state, state->a); break;     // ADC A
@@ -394,7 +462,7 @@ void emulate_op(State8080* state) {
         case 0x94: sub(state, state->h); break;     // SUB H
         case 0x95: sub(state, state->l); break;     // SUB L
         case 0x96:                                  // SUB M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            addr_offset = combine_immediates(state->h, state->l);
             sub(state, state->memory[addr_offset]);
             break;
         case 0x97: sub(state, state->a); break;     // SUB A
@@ -405,7 +473,7 @@ void emulate_op(State8080* state) {
         case 0x9c: sbb(state, state->h); break;     // SBB H
         case 0x9d: sbb(state, state->l); break;     // SBB L
         case 0x9e:                                  // SBB M
-            addr_offset = ((uint16_t)(state->h) << 8) | (uint16_t)(state->l);
+            addr_offset = combine_immediates(state->h, state->l);
             sbb(state, state->memory[addr_offset]);
             break;
         case 0x9f: sbb(state, state->a); break;     // SBB A
@@ -574,46 +642,79 @@ void emulate_op(State8080* state) {
     state->pc += 1;
 }
 
-void print_state(State8080* state) {
-    printf("{a: %u, b: %u, c: %u, d: %u, e: %u, h: %u, l: %u, sp: 0x%04x, pc: 0x%04x}\n", 
-        state->a, state->b, state->c, state->d, state->e, state->h, state->l, state->sp, state->pc);
+/**
+ * @brief Initializes an 8080 state with 64kb memory allocated.
+ * 
+ * @return State8080* 
+ */
+State8080* init_8080() {
+    // Initializing 8080 state and allocating 64kb of memory
+    State8080* state = calloc(1, sizeof(State8080));
+    state->memory = malloc(0x10000);
+    return state;
 }
 
-int main(int argc, char** argv) {
+/**
+ * @brief Reads a binary file into a state's memory.
+ * 
+ * @param state The 8080 state
+ * @param filename Path to the file
+ * @param offset The memory offset where the beginning of the file will start
+ * @return uint16_t The size of the file that was read
+ */
+uint16_t read_file_into_memory(State8080* state, char* filename, uint16_t offset) {
     // Open the file and verify it's valid
-    FILE *file = fopen(argv[1], "rb");
+    FILE *file = fopen(filename, "rb");
 
     if (file == NULL) {
-        printf("Error: Could not open %s\n", argv[1]);
+        printf("\nError: Could not open %s\n", filename);
         exit(1);
     }
 
-    // Get the file size and read it into a memory buffer
+    // Get the file size and read it into the memory buffer
     fseek(file, 0L, SEEK_END);
-    int file_size = ftell(file);
+    uint16_t file_size = ftell(file);
     fseek(file, 0L, SEEK_SET);
 
-    unsigned char* buffer = malloc(file_size);
-    fread(buffer, file_size, 1, file);
+    fread(&state->memory[offset], file_size, 1, file);
     fclose(file);
 
-    // Initialize state with ROM as the memory buffer
-    ConditionCodes codes = {0, 0, 0, 0, 0};
-    State8080 state = {0, 0, 0, 0, 0, 0, 0, 0, 0, buffer, codes, 0};
+    return file_size;
+}
+
+/**
+ * @brief Main method where program starts.
+ * 
+ * @param argc Number of arguments
+ * @param argv Arguments
+ * @return int Return code
+ */
+int main(int argc, char** argv) {
+    if (argc <= 1) {
+        printf("Please provide a ROM file as an argument.");
+        exit(1);
+    }
+
+    State8080* state = init_8080();
+    uint16_t file_size = read_file_into_memory(state, argv[1], 0);
     
-    printf("Init -- ");
-    print_state(&state);
+    //printf("Init -- ");
+    //print_state(state);
 
     // Read through the buffer and emulate each operation.
     unsigned int opcounter = 0;
-    while(state.pc < file_size) {
-        uint8_t cur_op = state.memory[state.pc];
-        printf("%04u -- 0x%02x -> ", opcounter, cur_op);
-        emulate_op(&state);
-        printf("State: ");
-        print_state(&state);
+    while(state->pc < file_size) {
+        uint8_t cur_op = state->memory[state->pc];
+        //printf("%04u -- 0x%02x -> ", opcounter, cur_op);
+        emulate_op(state);
+        //printf("State: ");
+        //print_state(state);
 
         opcounter++;
+
+        if (opcounter % 1000 == 0) {
+            printf("%u\n", opcounter);
+        }
     }
 
     return 0;
