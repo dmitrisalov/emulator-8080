@@ -34,3 +34,12 @@ gcc <path_to_disassembler.c> -o <path_to_output>
 ```
 ./<path_to_output> <path_to_rom>
 ```
+
+
+## Latest Progress
+I implemented enough operations to get through the first 50,000 or so instructions of the Space Invaders ROM. Comparing with an existing 8080 emulator, the states seem to match up until it gets into an infinite loop that's waiting for an interrupt, which hasn't been implemented.
+
+The next steps would be:
+- Set up proper way of testing the emulator using a test ROM
+- Finish implementing the rest of the operations
+- Implement rest of the Space Invaders arcade machine (graphics, sound, interrupts, buttons, etc.)
