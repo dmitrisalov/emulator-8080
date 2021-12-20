@@ -2,7 +2,7 @@
 A simple emulator for the Intel 8080 microprocessor written in C, based on the fantastic emulator101.com tutorial.
 
 ## Emulator
-emulator.c contains the source code for the emulator itself. It takes a binary file as an input and spits out some debugging information as it steps through and emulates the instructions. It's very early and probably filled with bugs at the moment, and most 8080 instructions are not implemented yet.
+emulator.c contains the source code for the emulator itself. It takes a binary file as an input and spits out some debugging information as it steps through and emulates the instructions. It's very early and probably filled with bugs at the moment, and not all 8080 instructions are implemented.
 
 ### Usage
 1. Compile using your favorite compiler. I use `gcc`:
@@ -19,7 +19,7 @@ gcc <path_to_emulator.c> -o <path_to_output>
 ```
 
 ## Disassembler
-disassembler.c contains source code for a very basic disassembler, which takes a binary file as an input and prints it out as valid 8080 assembly code.
+disassembler.c contains source code for a very basic disassembler, which takes a binary file as an input and prints it out as valid 8080 assembly code. It WILL disassemble any non-program data (sprites and what not) into assembly code.
 
 ### Usage
 1. Compile using your favorite compiler. I use `gcc`:
