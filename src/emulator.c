@@ -25,7 +25,8 @@ typedef struct State8080 {
     uint8_t int_enable;
 } State8080;
 
-/*---------------- Helpers ----------------*/
+#pragma region Helpers
+
 /**
  * @brief Combine two 1-byte immediates into a 2-byte immediate. Useful for register pairs.
  * 
@@ -68,7 +69,10 @@ void print_state(State8080* state) {
     print_codes(state);
 }
 
-/*-------- Arithmetic Codes/Flags Calculations --------*/
+#pragma endregion
+
+#pragma region Arithmetic Codes/Flags Calculations
+
 void calculate_codes_z(State8080* state, uint8_t result) {
     state->codes.z = (result & 0xff) == 0;
 }
@@ -113,24 +117,28 @@ void calculate_codes_all_except_cy(State8080* state, uint8_t result) {
     calculate_codes_ac(state, result);
 }
 
-/*------------------------ Errors ------------------------*/
+#pragma endregion
+
+#pragma region Errors
+
 void unimplemented_op_error(State8080* state) {
     printf("\nError: Unimplemented operation at 0x%04x (opcode: 0x%02x)\n", 
         state->pc, state->memory[state->pc]);
     exit(1);
 }
 
-/*--------------- Arithmetic Instructions ---------------*/
+#pragma endregion
+
+#pragma region Arithmetic Operations
+
 void add(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a + (uint16_t)value;
-
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void adc(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a + (uint16_t)value + (uint16_t)state->codes.cy;
-
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
@@ -146,14 +154,12 @@ void dad(State8080* state, uint16_t value) {
 
 void sub(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a - (uint16_t)value;
-
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
 
 void sbb(State8080* state, uint8_t value) {
     uint16_t result = (uint16_t)state->a - (uint16_t)value - (uint16_t)state->codes.cy;
-
     calculate_codes_all(state, result);
     state->a = result & 0xff;
 }
@@ -182,13 +188,43 @@ void dcx(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
     }
 }
 
-/*--------------------- Logical Instructions ---------------------*/
+void cpi(State8080* state, uint8_t value) {
+    uint8_t result = state->a - value;
+    calculate_codes_all(state, result);
+
+    printf("Result in hex: 0x%04x\t", result);
+
+    state->pc++;
+}
+
+#pragma endregion
+
+#pragma region Logical and Bitwise Operations
+
 void rrc(State8080* state) {
     state->codes.cy = state->a & 1;
     state->a = ((state->a & 1) << 7) | (state->a >> 1);    
 }
 
-/*----------------- Data Transfer Instructions -----------------*/
+void ana(State8080* state, uint8_t value) {
+    state->a = state->a & value;
+    calculate_codes_all(state, state->a);
+}
+
+void xra(State8080* state, uint8_t value) {
+    state->a = state->a ^ value;
+    calculate_codes_all(state, state->a);
+}
+
+void ora(State8080* state, uint8_t value) {
+    state->a = state->a | value;
+    calculate_codes_all(state, state->a);
+}
+
+#pragma region endregion
+
+#pragma region Data Transfer Operations
+
 void mvi(State8080* state, uint8_t* reg, uint8_t value) {
     *reg = value;
     state->pc++;
@@ -214,7 +250,10 @@ void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
     state->memory[addr] = state->a;
 }
 
-/*----------------- Branch Instructions -----------------*/
+#pragma endregion
+
+#pragma region Brach Operations
+
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
     state->pc = combine_immediates(opcode[2], opcode[1]);
@@ -243,7 +282,25 @@ void ret(State8080* state) {
     state->sp += 2;
 }
 
-/*-------------------------------------------------------*/
+#pragma endregion
+
+#pragma region Stack Operations
+
+void push(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
+    state->memory[state->sp - 1] = *reg_1;
+    state->memory[state->sp - 2] = *reg_2;
+    state->sp -= 2;
+}
+
+void pop(State8080* state, uint8_t* reg_1, uint8_t* reg_2) {
+    *reg_1 = state->memory[state->sp + 1];
+    *reg_2 = state->memory[state->sp];
+    state->sp += 2;
+}
+
+#pragma endregion
+
+#pragma region Main Operation Emulation Switch Case
 
 void emulate_op(State8080* state) {
     uint8_t* opcode = &state->memory[state->pc];
@@ -346,7 +403,7 @@ void emulate_op(State8080* state) {
         case 0x39:                                          // DAD SP
             dad(state, state->sp);
             break;
-        case 0x3a:                                          // LDAX D
+        case 0x3a:                                          // LDAX 2-byte-immediate
              ldax(state, opcode[2], opcode[1]);
              state->pc += 2;
              break;
@@ -512,31 +569,40 @@ void emulate_op(State8080* state) {
             break;
         case 0x9f: sbb(state, state->a); break;     // SBB A
 
-        case 0xa0: unimplemented_op_error(state); break;
-        case 0xa1: unimplemented_op_error(state); break;
-        case 0xa2: unimplemented_op_error(state); break;
-        case 0xa3: unimplemented_op_error(state); break;
-        case 0xa4: unimplemented_op_error(state); break;
-        case 0xa5: unimplemented_op_error(state); break;
-        case 0xa6: unimplemented_op_error(state); break;
-        case 0xa7: unimplemented_op_error(state); break;
-        case 0xa8: unimplemented_op_error(state); break;
-        case 0xa9: unimplemented_op_error(state); break;
-        case 0xaa: unimplemented_op_error(state); break;
-        case 0xab: unimplemented_op_error(state); break;
-        case 0xac: unimplemented_op_error(state); break;
-        case 0xad: unimplemented_op_error(state); break;
-        case 0xae: unimplemented_op_error(state); break;
-        case 0xaf: unimplemented_op_error(state); break;
+        case 0xa0: ana(state, state->b);            // ANA B
+        case 0xa1: ana(state, state->c);            // ANA C
+        case 0xa2: ana(state, state->d);            // ANA D
+        case 0xa3: ana(state, state->e);            // ANA E
+        case 0xa4: ana(state, state->h);            // ANA H
+        case 0xa5: ana(state, state->l);            // ANA L
+        case 0xa6:                                  // ANA M
+            addr_offset = combine_immediates(state->h, state->l);
+            ana(state, state->memory[addr_offset]);
+            break;
+        case 0xa7: ana(state, state->a);            // ANA A
+        case 0xa8: xra(state, state->b);            // XRA B
+        case 0xa9: xra(state, state->c);            // XRA C
+        case 0xaa: xra(state, state->d);            // XRA D
+        case 0xab: xra(state, state->e);            // XRA E
+        case 0xac: xra(state, state->h);            // XRA H
+        case 0xad: xra(state, state->l);            // XRA L
+        case 0xae:                                  // XRA M
+            addr_offset = combine_immediates(state->h, state->l);
+            xra(state, state->memory[addr_offset]);
+            break;
+        case 0xaf: xra(state, state->a);            // XRA A
 
-        case 0xb0: unimplemented_op_error(state); break;
-        case 0xb1: unimplemented_op_error(state); break;
-        case 0xb2: unimplemented_op_error(state); break;
-        case 0xb3: unimplemented_op_error(state); break;
-        case 0xb4: unimplemented_op_error(state); break;
-        case 0xb5: unimplemented_op_error(state); break;
-        case 0xb6: unimplemented_op_error(state); break;
-        case 0xb7: unimplemented_op_error(state); break;
+        case 0xb0: ora(state, state->b);            // ORA B
+        case 0xb1: ora(state, state->c);            // ORA C
+        case 0xb2: ora(state, state->d);            // ORA D
+        case 0xb3: ora(state, state->e);            // ORA E
+        case 0xb4: ora(state, state->h);            // ORA H
+        case 0xb5: ora(state, state->l);            // ORA L
+        case 0xb6:                                  // ORA M
+            addr_offset = combine_immediates(state->h, state->l);
+            ora(state, state->memory[addr_offset]);
+            break;
+        case 0xb7: ora(state, state->l);            // ORA L
         case 0xb8: unimplemented_op_error(state); break;
         case 0xb9: unimplemented_op_error(state); break;
         case 0xba: unimplemented_op_error(state); break;
@@ -547,7 +613,7 @@ void emulate_op(State8080* state) {
         case 0xbf: unimplemented_op_error(state); break;
 
         case 0xc0: unimplemented_op_error(state); break;
-        case 0xc1: unimplemented_op_error(state); break;
+        case 0xc1: pop(state, &state->b, &state->c); break;     // POP B
         case 0xc2:                                              // JNZ address
             if (state->codes.z == 0) {
                 jmp(state, opcode);
@@ -558,7 +624,7 @@ void emulate_op(State8080* state) {
             break;
         case 0xc3: jmp(state, opcode); break;                   // JMP address
         case 0xc4: unimplemented_op_error(state); break;
-        case 0xc5: unimplemented_op_error(state); break;
+        case 0xc5: push(state, &state->b, &state->c); break;    // PUSH B
         case 0xc6: add(state, opcode[1]); state->pc++; break;   // ADI 1-byte-immediate
         case 0xc7: unimplemented_op_error(state); break;
         case 0xc8: unimplemented_op_error(state); break;
@@ -578,7 +644,7 @@ void emulate_op(State8080* state) {
         case 0xcf: unimplemented_op_error(state); break;
 
         case 0xd0: unimplemented_op_error(state); break;
-        case 0xd1: unimplemented_op_error(state); break;
+        case 0xd1: pop(state, &state->d, &state->e); break;     // POP D
         case 0xd2:                                              // JNC address
             if (state->codes.cy == 0) {
                 jmp(state, opcode);
@@ -587,9 +653,9 @@ void emulate_op(State8080* state) {
                 state->pc += 2;
             }
             break;
-        case 0xd3: unimplemented_op_error(state); break;
+        case 0xd3: /*TODO*/ state->pc++; break;                 // OUT 1-byte-immediate
         case 0xd4: unimplemented_op_error(state); break;
-        case 0xd5: unimplemented_op_error(state); break;
+        case 0xd5: push(state, &state->d, &state->e); break;    // PUSH D
         case 0xd6: sub(state, opcode[1]); state->pc++; break;   // SUI 1-byte-immediate
         case 0xd7: unimplemented_op_error(state); break;
         case 0xd8: unimplemented_op_error(state); break;
@@ -609,8 +675,8 @@ void emulate_op(State8080* state) {
         case 0xdf: unimplemented_op_error(state); break;
 
         case 0xe0: unimplemented_op_error(state); break;
-        case 0xe1: unimplemented_op_error(state); break;
-        case 0xe2:                                  // JPO address
+        case 0xe1: pop(state, &state->h, &state->l); break;     // POP H
+        case 0xe2:                                              // JPO address
             if (state->codes.p == 0) {
                 jmp(state, opcode);
             }
@@ -620,12 +686,12 @@ void emulate_op(State8080* state) {
             break;
         case 0xe3: unimplemented_op_error(state); break;
         case 0xe4: unimplemented_op_error(state); break;
-        case 0xe5: unimplemented_op_error(state); break;
-        case 0xe6: unimplemented_op_error(state); break;
+        case 0xe5: push(state, &state->h, &state->l); break;    // PUSH H
+        case 0xe6: ana(state, opcode[1]); state->pc++; break;   // ANA 1-byte-immediate
         case 0xe7: unimplemented_op_error(state); break;
         case 0xe8: unimplemented_op_error(state); break;
         case 0xe9: unimplemented_op_error(state); break;
-        case 0xea:                                  // JPE address
+        case 0xea:                                              // JPE address
             if (state->codes.p != 0) {
                 jmp(state, opcode);
             }
@@ -633,15 +699,31 @@ void emulate_op(State8080* state) {
                 state->pc += 2;
             }
             break;
-        case 0xeb: unimplemented_op_error(state); break;
+        case 0xeb:                                              // XCHG
+            value = state->d;
+            state->d = state->h;
+            state->h = (uint8_t)value;
+            value = state->e;
+            state->e = state->l;
+            state->l = (uint8_t)value;
+            break;
         case 0xec: unimplemented_op_error(state); break;
         case 0xed: unimplemented_op_error(state); break;
         case 0xee: unimplemented_op_error(state); break;
         case 0xef: unimplemented_op_error(state); break;
 
         case 0xf0: unimplemented_op_error(state); break;
-        case 0xf1: unimplemented_op_error(state); break;
-        case 0xf2:                                  // JP address
+        case 0xf1:                                          // POP PSW
+            value = state->memory[state->sp];
+            state->codes.z = (value & 0b1) != 0;
+            state->codes.s = (value & 0b10) != 0;
+            state->codes.p = (value & 0b100) != 0;
+            state->codes.cy = (value & 0b1000) != 0;
+            state->codes.ac = (value & 0b10000) != 0;
+            state->a = state->memory[state->sp + 1];
+            state->sp += 2;
+            break;
+        case 0xf2:                                          // JP address
             if (state->codes.s == 0) {
                 jmp(state, opcode);
             }
@@ -651,12 +733,19 @@ void emulate_op(State8080* state) {
             break;
         case 0xf3: unimplemented_op_error(state); break;
         case 0xf4: unimplemented_op_error(state); break;
-        case 0xf5: unimplemented_op_error(state); break;
+        case 0xf5:                                          // PUSH PSW
+            value = (state->codes.z |
+                state->codes.s << 1 |
+                state->codes.p << 2 |
+                state->codes.cy << 3 |
+                state->codes.ac << 4);
+            push(state, &state->a, (uint8_t*)&value);
+            break;
         case 0xf6: unimplemented_op_error(state); break;
         case 0xf7: unimplemented_op_error(state); break;
         case 0xf8: unimplemented_op_error(state); break;
         case 0xf9: unimplemented_op_error(state); break;
-        case 0xfa:                                  // JM address
+        case 0xfa:                                          // JM address
             if (state->codes.s != 0) {
                 jmp(state, opcode);
             }
@@ -664,10 +753,10 @@ void emulate_op(State8080* state) {
                 state->pc += 2;
             }
             break;
-        case 0xfb: unimplemented_op_error(state); break;
+        case 0xfb: state->int_enable = 1; break;            // EI
         case 0xfc: unimplemented_op_error(state); break;
         case 0xfd: unimplemented_op_error(state); break;
-        case 0xfe: unimplemented_op_error(state); break;
+        case 0xfe: cpi(state, opcode[1]); break;            // CPI 1-byte-immediate
         case 0xff: unimplemented_op_error(state); break;
 
         default: unimplemented_op_error(state); break;
@@ -675,6 +764,10 @@ void emulate_op(State8080* state) {
 
     state->pc += 1;
 }
+
+#pragma endregion
+
+#pragma region Emulator Initialization
 
 /**
  * @brief Initializes an 8080 state with 64kb memory allocated.
@@ -715,6 +808,8 @@ uint16_t read_file_into_memory(State8080* state, char* filename, uint16_t offset
 
     return file_size;
 }
+
+#pragma endregion
 
 /**
  * @brief Main method where program starts.
