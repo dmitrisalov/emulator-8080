@@ -69,6 +69,17 @@ void print_state(State8080* state) {
     print_codes(state);
 }
 
+/**
+ * @brief Shuts down the emualator
+ * 
+ * @param state 
+ */
+void shutdown(State8080* state) {
+    printf("\nProgram Finished.\nFinal State -> ");
+    print_state(state);
+    exit(0);
+}
+
 #pragma endregion
 
 #pragma region Arithmetic Codes/Flags Calculations
@@ -192,8 +203,6 @@ void cpi(State8080* state, uint8_t value) {
     uint8_t result = state->a - value;
     calculate_codes_all(state, result);
 
-    printf("Result in hex: 0x%04x\t", result);
-
     state->pc++;
 }
 
@@ -221,7 +230,7 @@ void ora(State8080* state, uint8_t value) {
     calculate_codes_all(state, state->a);
 }
 
-#pragma region endregion
+#pragma endregion
 
 #pragma region Data Transfer Operations
 
@@ -252,7 +261,7 @@ void stax(State8080* state, uint8_t reg_1_val, uint8_t reg_2_val) {
 
 #pragma endregion
 
-#pragma region Brach Operations
+#pragma region Branch Operations
 
 void jmp(State8080* state, unsigned char* opcode) {
     // Combine the next 2 bytes into an address and assign the program counter to it.
@@ -806,6 +815,9 @@ uint16_t read_file_into_memory(State8080* state, char* filename, uint16_t offset
     fread(&state->memory[offset], file_size, 1, file);
     fclose(file);
 
+    // Set the program counter to the beginning of the rom
+    state->pc = offset;
+
     return file_size;
 }
 
@@ -825,7 +837,7 @@ int main(int argc, char** argv) {
     }
 
     State8080* state = init_8080();
-    uint16_t file_size = read_file_into_memory(state, argv[1], 0);
+    uint16_t file_size = read_file_into_memory(state, argv[1], 0x100);
     
     printf("Init -- ");
     print_state(state);
@@ -841,9 +853,11 @@ int main(int argc, char** argv) {
         opcounter++;
 
         if (opcounter > 50000) {
-            exit(0);
+            shutdown(state);
         }
     }
+
+    shutdown(state);
 
     return 0;
 }
